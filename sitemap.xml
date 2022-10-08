@@ -2,25 +2,25 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
   xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>http://localhost:8080/about/</loc>
+    <loc>https://dashahe.github.io/about/</loc>
     <lastmod>2019-04-19T21:37:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/</loc>
+    <loc>https://dashahe.github.io/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/posts/</loc>
+    <loc>https://dashahe.github.io/posts/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/tags/primer/</loc>
+    <loc>https://dashahe.github.io/tags/primer/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/2018/03/primer-when-you-have-too-much-to-do/</loc>
+    <loc>https://dashahe.github.io/2018/03/primer-when-you-have-too-much-to-do/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/tags/</loc>
+    <loc>https://dashahe.github.io/tags/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url><url>
-    <loc>http://localhost:8080/tags/todo/</loc>
+    <loc>https://dashahe.github.io/tags/todo/</loc>
     <lastmod>2018-03-18T02:01:58+05:30</lastmod>
   </url>
 </urlset>
