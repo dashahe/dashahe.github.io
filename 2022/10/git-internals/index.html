@@ -1,0 +1,268 @@
+<!doctype html><html><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><title>Git Internals - curry's blog</title><meta name=viewport content="width=device-width,initial-scale=1"><meta itemprop=name content="Git Internals"><meta itemprop=description content="DIVE INTO GIT DIVE INTO GIT What&rsquo;s GIT Object Model SHA Git Packing Diff Algorithm Git Diff Algorithm Comparision myers minimal patience histogram Dumb Diff Algorithm Implementation Myers Diff Algorithm Implementation Git Merge Git Patch Optimizations Commit Graph Bit Map What&rsquo;s GIT git 是一个 Version Constrol System (VCS)，同时也是一个 Content Addressable File System。
+优点：
+强大的分支和合并功能：极度灵活的版本管理和分支管理，方便进行 branching & merging 效率高：因为其文件系统的设计，几乎所有操作都在本地执行，仅在必要时同远端通信，而且使用纯 C 语言实现，天然高效 分布式：每次 checkout 都是一次 clone，由此衍生的多种 workflow，并且多备份，能够支持 remote 数据保障：也就是 CAFS 的优点，每次写入都会产生唯一对应的 OID，并且不能篡改，能够确保相同的 commit id 在不同的 clients 内容相同 free & open source 从下列 git 和 svn 的性能测试数据来看，除了 clone 之下，其余操作都远胜于 svn，原因是首次 git clone，会下载所有版本的内容，所以下载量较大，所以耗时较长。"><meta itemprop=datePublished content="2022-10-23T15:20:39+08:00"><meta itemprop=dateModified content="2022-10-23T15:20:39+08:00"><meta itemprop=wordCount content="1744"><meta itemprop=keywords content><meta property="og:title" content="Git Internals"><meta property="og:description" content="DIVE INTO GIT DIVE INTO GIT What&rsquo;s GIT Object Model SHA Git Packing Diff Algorithm Git Diff Algorithm Comparision myers minimal patience histogram Dumb Diff Algorithm Implementation Myers Diff Algorithm Implementation Git Merge Git Patch Optimizations Commit Graph Bit Map What&rsquo;s GIT git 是一个 Version Constrol System (VCS)，同时也是一个 Content Addressable File System。
+优点：
+强大的分支和合并功能：极度灵活的版本管理和分支管理，方便进行 branching & merging 效率高：因为其文件系统的设计，几乎所有操作都在本地执行，仅在必要时同远端通信，而且使用纯 C 语言实现，天然高效 分布式：每次 checkout 都是一次 clone，由此衍生的多种 workflow，并且多备份，能够支持 remote 数据保障：也就是 CAFS 的优点，每次写入都会产生唯一对应的 OID，并且不能篡改，能够确保相同的 commit id 在不同的 clients 内容相同 free & open source 从下列 git 和 svn 的性能测试数据来看，除了 clone 之下，其余操作都远胜于 svn，原因是首次 git clone，会下载所有版本的内容，所以下载量较大，所以耗时较长。"><meta property="og:type" content="article"><meta property="og:url" content="https://curryxie.com/2022/10/git-internals/"><meta property="article:section" content="posts"><meta property="article:published_time" content="2022-10-23T15:20:39+08:00"><meta property="article:modified_time" content="2022-10-23T15:20:39+08:00"><meta name=twitter:card content="summary"><meta name=twitter:title content="Git Internals"><meta name=twitter:description content="DIVE INTO GIT DIVE INTO GIT What&rsquo;s GIT Object Model SHA Git Packing Diff Algorithm Git Diff Algorithm Comparision myers minimal patience histogram Dumb Diff Algorithm Implementation Myers Diff Algorithm Implementation Git Merge Git Patch Optimizations Commit Graph Bit Map What&rsquo;s GIT git 是一个 Version Constrol System (VCS)，同时也是一个 Content Addressable File System。
+优点：
+强大的分支和合并功能：极度灵活的版本管理和分支管理，方便进行 branching & merging 效率高：因为其文件系统的设计，几乎所有操作都在本地执行，仅在必要时同远端通信，而且使用纯 C 语言实现，天然高效 分布式：每次 checkout 都是一次 clone，由此衍生的多种 workflow，并且多备份，能够支持 remote 数据保障：也就是 CAFS 的优点，每次写入都会产生唯一对应的 OID，并且不能篡改，能够确保相同的 commit id 在不同的 clients 内容相同 free & open source 从下列 git 和 svn 的性能测试数据来看，除了 clone 之下，其余操作都远胜于 svn，原因是首次 git clone，会下载所有版本的内容，所以下载量较大，所以耗时较长。"><link rel=stylesheet type=text/css media=screen href=https://curryxie.com/css/normalize.css><link rel=stylesheet type=text/css media=screen href=https://curryxie.com/css/main.css><link id=dark-scheme rel=stylesheet type=text/css href=https://curryxie.com/css/dark.css><script src=https://curryxie.com/js/feather.min.js></script>
+<script src=https://curryxie.com/js/main.js></script></head><body><div class="container wrapper"><div class=header><h1 class=site-title><a href=https://curryxie.com/>curry's blog</a></h1><div class=site-description><p></p><nav class="nav social"><ul class=flat><li><a href=https://github.com/dashahe/ title=Github><i data-feather=github></i></a></li><li><a href=/index.xml title=RSS><i data-feather=rss></i></a></li></ul></nav></div><nav class=nav><ul class=flat><li><a href=/>Home</a></li><li><a href=/posts>All posts</a></li><li><a href=/about>About</a></li><li><a href=/tags>Tags</a></li></ul></nav></div><div class=post><div class=post-header><div class=meta><div class=date><span class=day>23</span>
+<span class=rest>Oct 2022</span></div></div><div class=matter><h1 class=title>Git Internals</h1></div></div><aside class=toc><header><h2>Contents</h2></header><nav id=TableOfContents><ol><li><a href=#whats-git>What&rsquo;s GIT</a></li><li><a href=#object-model>Object Model</a></li><li><a href=#sha>SHA</a></li><li><a href=#git-packing>Git Packing</a></li><li><a href=#diff-algorithm>Diff Algorithm</a><ol><li><a href=#git-diff-algorithm-comparision>Git Diff Algorithm Comparision</a></li><li><a href=#dumb-diff-algorithm-implementation>Dumb Diff Algorithm Implementation</a></li><li><a href=#myers-diff-algorithm-implementation>Myers Diff Algorithm Implementation</a></li></ol></li><li><a href=#git-merge>Git Merge</a></li><li><a href=#git-patch>Git Patch</a></li><li><a href=#optimizations>Optimizations</a><ol><li><a href=#commit-graph>Commit Graph</a></li><li><a href=#bit-map>Bit Map</a></li></ol></li></ol></nav></aside><div class=markdown><h1 id=dive-into-git>DIVE INTO GIT</h1><ul><li><a href=#dive-into-git>DIVE INTO GIT</a><ul><li><a href=#whats-git>What&rsquo;s GIT</a></li><li><a href=#object-model>Object Model</a></li><li><a href=#sha>SHA</a></li><li><a href=#git-packing>Git Packing</a></li><li><a href=#diff-algorithm>Diff Algorithm</a><ul><li><a href=#git-diff-algorithm-comparision>Git Diff Algorithm Comparision</a><ul><li><a href=#myers>myers</a></li><li><a href=#minimal>minimal</a></li><li><a href=#patience>patience</a></li><li><a href=#histogram>histogram</a></li></ul></li><li><a href=#dumb-diff-algorithm-implementation>Dumb Diff Algorithm Implementation</a></li><li><a href=#myers-diff-algorithm-implementation>Myers Diff Algorithm Implementation</a></li></ul></li><li><a href=#git-merge>Git Merge</a></li><li><a href=#git-patch>Git Patch</a></li><li><a href=#optimizations>Optimizations</a><ul><li><a href=#commit-graph>Commit Graph</a></li><li><a href=#bit-map>Bit Map</a></li></ul></li></ul></li></ul><h2 id=whats-git>What&rsquo;s GIT</h2><p>git 是一个 Version Constrol System (VCS)，同时也是一个 <a href=https://en.wikipedia.org/wiki/Content-addressable_storage>Content Addressable File System</a>。</p><p>优点：</p><ul><li>强大的分支和合并功能：极度灵活的版本管理和分支管理，方便进行 branching & merging</li><li>效率高：因为其文件系统的设计，几乎所有操作都在本地执行，仅在必要时同远端通信，而且使用纯 C 语言实现，天然高效</li><li>分布式：每次 checkout 都是一次 clone，由此衍生的多种 workflow，并且多备份，能够支持 remote</li><li>数据保障：也就是 CAFS 的优点，每次写入都会产生唯一对应的 OID，并且不能篡改，能够确保相同的 commit id 在不同的 clients 内容相同</li><li>free & open source</li></ul><p>从下列 git 和 svn 的性能测试数据来看，除了 clone 之下，其余操作都远胜于 svn，原因是首次 git clone，会下载所有版本的内容，所以下载量较大，所以耗时较长。</p><p>参考：https://git-scm.com/about/small-and-fast。</p><h2 id=object-model>Object Model</h2><p>前面提到 git 是一个 content addressable file system，意味着 git 核心部分是一个简单的 key-value data store。任何写入 git 的内容，都是以 object 存在，并且会有一个 OID (Object ID) 对应，也就是该内容的 SHA1 值。</p><p>从另一个角度，每一次 commit 实际上都是一份 snapshot，即包含了该版本的整份文件目录快照，一次 <code>git clone</code> 便会获取该仓库所有的历史版本的所有文件，如果 git 没有十分优秀的存储机制和压缩率，仓库大小将是不可接受的。</p><p>优秀压缩率的实现基础便是 git object model，及其 packing 机制。前者保证了同一份文件只会存储一次，后者保证了存在大量松散 object 时，有一定的压缩机制减小 object 数量，以及总大小。</p><p>打开任意一个 git 仓库的 <code>.git</code> 目录，我们便可一窥究竟。objects 都存储在 <code>.git/objects</code> 目录下，例如：</p><pre tabindex=0><code>.git/objects
+├── 00
+│   └── 7111c2d10f351cbca7c197f24323d618af814b
+├── 01
+│   └── ded1976db3c06889e08df88314381a36fd6352
+├── 02
+│   ├── 273716526ec885d62e97987839fe70a1b45b98
+│   ├── 2b187259ae73764b8f50bc3adb8bdf1bb0d9eb
+│   └── 318dd3275f61becf8a454313383798d32abfe6
+...
+├── ff
+│   ├── 22492c7830ec4953c9450ffd62c43bf0c33f58
+│   └── 50a107a939c2731edf47a789631496f28fd553
+├── info
+│   ├── commit-graph
+│   └── packs
+└── pack
+    ├── pack-5bc3060ab4a933b867ed97247ccfcf7cbf352d4c.idx
+    ├── pack-5bc3060ab4a933b867ed97247ccfcf7cbf352d4c.pack
+    ├── pack-a3d358ba6ba63eea71191d97adb27d6e2d23e655.idx
+    ├── pack-a3d358ba6ba63eea71191d97adb27d6e2d23e655.pack
+    ├── pack-c52efca07f1e704b13a5b1954a5cc6641ef368b2.idx
+    └── pack-c52efca07f1e704b13a5b1954a5cc6641ef368b2.pack
+</code></pre><p>在 git 中 object 有四个类别：<strong>blob</strong>, <strong>tree</strong>, <strong>commit</strong>, <strong>tag</strong>，参考<a href=https://github.com/git/git/blob/afa70145a25e81faa685dc0b465e52b45d2444bd/cache.h#L481>源码</a>。</p><p>显而易见，这几种 object 代表的含义：</p><ul><li>blob，既文件</li><li>tree，既目录，包含若干 tree / blob</li><li>commit，既 commit，包含一个 tree 和一个 parent commit</li><li>tag，既 tag，包含一个 commit</li></ul><p>实际上，git object model 被称为 DAG (Directed Acyclic Graph) model，组织结构是一个有向无环图，我们能够通过工具 <a href=https://github.com/riezebosch/gitviz>gitviz</a> 可视化地查看：http://curry.woa.com:19999/</p><p>让我们来做一个实验，在一个初始仓库中，感受 git 对 object 的复用，代码参考：<a href=practices/object-model.sh>object-model.sh</a>。</p><p>在该实验中，会创建三个 commit，各自的 commit，其内容分别为：</p><pre tabindex=0><code>commit 1:
+  .
+  └── test.txt(&#34;version 1&#34;)
+
+commit 2:
+  .
+  ├── new.txt(&#34;version 2&#34;)
+  └── test.txt(&#34;new file&#34;)
+
+commit 3:
+  .
+  ├── subdir
+  │   └── test.txt(&#34;version 1&#34;)
+  └── test.txt(&#34;new file&#34;)
+</code></pre><p>使用 <code>git rev-list --objects --all</code> 可以查看一个仓库中所有的 objects，通过 <code>git cat-file</code> 命令，我们能够根据 object id 查看 object 的内容：</p><p>tag object:</p><pre tabindex=0><code>➜  zonesvr git:(master) git cat-file -p v0.2.0
+object 3eda36f9b57688406af2ec093e38e39289540cc4
+type commit
+tag v0.2.0
+tagger cschang &lt;cschang@tencent.com&gt; 1659074597 +0800
+
+词条
+</code></pre><p>commit object:</p><pre tabindex=0><code>➜  zonesvr git:(master) git cat-file -p 3eda36f9b57688406af2ec093e38e39289540cc4
+tree 746389f79e8c1053e582f901ff3e9f00e4bbd23e
+parent 10aba99ab590e759810620be6ac6d49747c90392
+author haiilan &lt;haiilan@tencent.com&gt; 1659065721 +0800
+committer lily_bot &lt;lily_bot@tencent.com&gt; 1659066212 +0000
+
+【bugfix】设置玩家等级经验矫正 (merge request !1485 )
+
+【bugfix】设置玩家等级经验矫正
+
+---
+
+Merge(squash) branch `fix-gm` into `master`
+
+* haiilan: fix set-user-level gm
+</code></pre><p>tree object:</p><pre tabindex=0><code>➜  zonesvr git:(master) git cat-file -p 746389f79e8c1053e582f901ff3e9f00e4bbd23e
+100644 blob 4356592ef76cc8fb06cbebb93ca54d5cc736169b    .gitignore
+100644 blob e8037d386d6890b9d0a09b3a777d1e5eb83da71c    .lily.yaml
+100644 blob 029242c422b95174acd83c55e0a6927bbe0a85a7    Earthfile
+100644 blob 3a6b86fb380df0d0bccb6d5ee265a39ae41d97b5    Makefile
+100644 blob 4d8e5aa91f790973062df59880393a9cb56ddc87    buf.yaml
+040000 tree 83c147f170a98efb906a4695f26ca4a49bc119e0    build
+040000 tree 9d55ed1f87ddc02568c104c200de988acaad68e2    cmd
+100644 blob 2dfe50cfcfd9cd4952b77c2ea31c94a9316725c3    go.mod
+100644 blob 2b020ee877151264838f8b862af8174044d1c8f9    go.sum
+040000 tree 619fe0fb3a528e682697c625d21d175e102a78c1    internal
+040000 tree 077a261fd2dd29e45bd828b249d689c2b97840ea    pkg
+040000 tree dc0a5b53b22300513cc232480fd9ccbb2407c044    testdata
+</code></pre><p>blob object:</p><pre tabindex=0><code>➜  zonesvr git:(master) git cat-file -p 2dfe50cfcfd9cd4952b77c2ea31c94a9316725c3
+module git.code.oa.com/red/zonesvr
+
+go 1.17
+
+require (
+        git.code.oa.com/red/anti-addiction v0.0.0-20220425130225-c18472d3b41f
+...
+</code></pre><h2 id=sha>SHA</h2><p>在上述内容中，了解到 git object id 是其内容的 SHA1 值，但是在实践验证却发现两者并不相同，难道是 git 使用的 SHA 算法不同？</p><p>SHA - Secure Hash Algorithm</p><p>美国国家安全局设计，美国国家标准技术研究所 (NIST) 发布作为联邦资料处理标准 (FIPS)
+常见的安全哈希算法，<a href=https://zh.m.wikipedia.org/zh-hans/SHA-3>参考</a>：</p><ul><li>md5，已经发现碰撞</li><li>sha0，已经发现碰撞，被撤回</li><li>sha1，已经发现碰撞，能够找到两个文件，他们的 sha1 相同，参考：https://shattered.it/</li><li>sha2 (sha-256, sha-512, sha-224 &mldr;)</li><li>sha3</li></ul><p>我们知道 git object 的 ID 都是其内容的 sha1 值，但是我们发现：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>➜ <span style=color:#0086b3>echo</span> <span style=color:#d14>&#39;abcde&#39;</span> &gt; test-file <span style=color:#000;font-weight:700>&amp;&amp;</span> sha1sum test-file
+</span></span><span style=display:flex><span>ec11312386ad561674f724b8cca7cf1796e26d1d  test-file
+</span></span><span style=display:flex><span>➜ git hash-object test-file 
+</span></span><span style=display:flex><span>00dedf6bd5f3e493ce8b03c889912f47b01297d4
+</span></span></code></pre></td></tr></table></div></div><p>使用 sha1sum 二进制计算的 SHA1 和 git hash-object 计算的 SHA1 不相同，难道是算法不同？</p><p>NO，原来是 git 计算时会在前面加上一些前缀（参考 <a href=https://stackoverflow.com/questions/5290444/why-does-git-hash-object-return-a-different-hash-than-openssl-sha1>https://stackoverflow.com/questions/5290444/why-does-git-hash-object-return-a-different-hash-than-openssl-sha1</a>）：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span>➜ <span style=color:teal>content</span><span style=color:#000;font-weight:700>=</span><span style=color:#000;font-weight:700>$(</span>cat test-file<span style=color:#000;font-weight:700>)</span> <span style=color:#000;font-weight:700>&amp;&amp;</span> print <span style=color:#d14>&#34;blob 6\0</span><span style=color:teal>$content</span><span style=color:#d14>&#34;</span> | sha1sum
+</span></span><span style=display:flex><span>00dedf6bd5f3e493ce8b03c889912f47b01297d4  -
+</span></span></code></pre></td></tr></table></div></div><p>能够想到，这样设计的原因：</p><ul><li>避免相同内容的 blob、tree 对象，具有相同的 sha1 值</li><li>通过前缀便可识别 git object 的 metadata，毕竟 git objects 都是保存在一起的，没有标识无法识别</li></ul><p>实践参考：<a href=practices/sha.sh>sha.sh</a></p><h2 id=git-packing>Git Packing</h2><p>我们发现 <code>.git/objects/</code> 目录下，不仅有 SHA1 路径的 objects，还有一个 pack 目录，其中包含了若干 <code>pack-*.idx</code> & <code>pack-*.pack</code> 文件。</p><p>前面提到，git 具有极高的存储压缩率，object 的复用是一方面，另一方面就是 packing 机制所带来的优化了。</p><p>使用 <code>git count-objects -v -H</code> 我们能够看到仓库中的 object 存储状况，包括 loose object 和 in-pack object 的数量和总大小。</p><blockquote><p>Again, this generally does nothing. You must have around 7,000 loose objects or more than 50 packfiles for Git to fire up a real gc command. You can modify these limits with the gc.auto and gc.autopacklimit config settings, respectively.</p></blockquote><p>git 有一项机制是 auto gc，即发现仓库中的 loose object 超过 7k 或者 50个 packfiles时，会自动运行 git gc。当然，你可以手动执行，使用 <code>git gc</code> 命令，可以将 objects 进行打包，生成 pack 文件（包括 <code>*.idx</code> 和 <code>*.pack</code>），例如：</p><pre tabindex=0><code>➜  zonesvr git:(master) ✗ git count-objects -v -H
+count: 547
+size: 3.28 MiB
+in-pack: 47874
+packs: 3
+size-pack: 37.89 MiB
+prune-packable: 15
+garbage: 0
+size-garbage: 0 bytes
+
+➜  zonesvr git:(master) ✗ git gc
+Enumerating objects: 48285, done.
+Counting objects: 100% (48285/48285), done.
+Delta compression using up to 16 threads
+Compressing objects: 100% (12371/12371), done.
+Writing objects: 100% (48285/48285), done.
+Total 48285 (delta 32384), reused 47590 (delta 31835), pack-reused 0
+
+➜  zonesvr git:(master) ✗ git count-objects -v -H
+count: 71
+size: 624.00 KiB
+in-pack: 48285
+packs: 1
+size-pack: 37.52 MiB
+prune-packable: 0
+garbage: 0
+size-garbage: 0 bytes
+</code></pre><p>使用 <code>git unpack-objects</code> 可以将 packfile 解开成 loose objects。
+有个<a href=practices/packing.sh>小实验</a>，可以了解到 pack 带来的 delta 存储功能和强大的压缩能力。</p><p>另外，cibase 中包含了许多二进制文件的不同版本，所以仓库总大小会很大，这里有<a href=images/cibase-before-pack.png>pack前</a>和<a href=images/cibase-after-pack.png>pack后</a>的存储占用对比，运行 从 1.1GB+ 缩小到了 730MB。</p><p>pack 索引文件内部组织方式如下：</p><h2 id=diff-algorithm>Diff Algorithm</h2><p>Diff 是 Merge 的前提。Diff 算法分为两类:</p><ul><li>structured diff，会考虑 diff 内容的结构，会将其解析为 AST，然后进行 diff，例如 JSON 缩写一行时，使用 git diff 就不太合适。</li><li>non-strucute diff，以行作为 diff 基本单位，不考虑 diff 内容的结构，git diff 即为此类。</li></ul><p>不管是日常开发，还是 Code Review，均会使用 <code>git diff</code>，其输出的内容如下：</p><pre tabindex=0><code>diff --git a/internal/pkg/systems/buddy/impl/system.go b/internal/pkg/systems/buddy/impl/system.go
+index fb49de45..19dd74b1 100644
+--- a/internal/pkg/systems/buddy/impl/system.go
++++ b/internal/pkg/systems/buddy/impl/system.go
+@@ -881,7 +881,7 @@ func (s *BuddySystem) CheckItems(ctx context.Context, deductList []itemsys.Item,
+ func (s *BuddySystem) GetAdditionInfo(ctx context.Context, r *player.Player, buddyID int64) (perc *corepb.FightAttr, percMax *corepb.FightAttr, err error) {
+        // 如果系统没开放，就不要加上属性值了
+        if err := systemopen.MustSystem().CheckSystemOpen(ctx, r, zonepb.SystemID_Buddy, systemopen.WithIgnoreCheckIdip()); err != nil {
+-               return nil, nil, nil
++               return corepb.NewFightAttr(), corepb.NewFightAttr(), nil
+        }
+        percAttr, _, _ := buddy.MustModel(r).GetAdditionInfo(ctx)
+ 
+@@ -895,6 +895,13 @@ func (s *BuddySystem) GetAdditionInfo(ctx context.Context, r *player.Player, bud
+        if percMaxAttr == nil {
+                percMaxAttr, _ = buddy.MustModel(r).GetMaxBuddyAddition(ctx)
+        }
++       // 这里如果nil,返回空值吧
++       if percAttr == nil {
++               percAttr = corepb.NewFightAttr()
++       }
++       if percMaxAttr == nil {
++               percMaxAttr = corepb.NewFightAttr()
++       }
+        return percAttr, percMaxAttr, nil
+ }
+</code></pre><p>本质上，比较两个文件，是以行作为最小单元，找到一种方式，将文件 source 转化为文件 target，而这个转化操作，只能有两种方式：1. 删除 source 中的某行；2. 增加 target 中的某行。再简化一下，diff 是将一个 source string 转化为　target string 的过程，例如：<code>ABCABBA</code> -> <code>CBABAC</code>。</p><p>显而易见，我们有许多方式进行转化，例如：</p><pre tabindex=0><code>Method1            Method2
+-A                 -A 
+-B                 -B
+-C                  C
+-A                 +B
+-B                  A
+-B                  B
+-A                 -B
++C                  A
++B                 +C
++A
++B
++A
++C
+</code></pre><p>虽然 Method1 和 Method2 都能完成从 source 到 target 的转化，但是 Method2 使用的操作次数更少，也就是编辑距离更小，在很多时候是更加优秀的结果，能够让我们尽可能少的 review 代码。当然，也不是任何时候，编辑距离最小，就是最优的 diff 结果，因为在 review diff 时，有时候更加完整的代码片段，比零碎但是更小修改的 diff 结果更加人性化。</p><p>所以，git diff 提供了四种 diff 算法，我们逐个看看。</p><h3 id=git-diff-algorithm-comparision>Git Diff Algorithm Comparision</h3><p><a href=https://luppeng.wordpress.com/2020/10/10/when-to-use-each-of-the-git-diff-algorithms/>Git 支持多种 diff algorithm</a>，包括：myers(default), mininal, patience, histogram。</p><p>在我们使用 <code>git diff</code> 时，默认的 diff 算法是 myers diff algorithm，当然我们可以使用 <code>git diff --diff-algorithm=</code> 或者 git config 配置了 diff algorithm 来使用其他的 diff 算法。</p><h4 id=myers>myers</h4><p>默认的 diff 算法，是一个贪婪式算法，在绝大多数情况下，都能够生成较小的 diff，并且效率极高，时间复杂度是 O(N*D)，我们后续会详细讲解。</p><h4 id=minimal>minimal</h4><p>minimal 算法会使用更高的时间复杂度，O(N^1.5 * log N)，去生成最小的 diff patch。在大多数情况下，minimal 算法和 myers 算法生成的 diff 并无二致，但是遇到两个大文件，并且有大量 diff 时，minimal 能够花更大的计算资源去生成更小的 diff：</p><pre tabindex=0><code># 我们找到一个 game-cfg 中 2021 年的 commit，比较当时的 config/Dial/DialReformConfig.json 和当前的版本，该文件较大
+# 能够看到使用 minimal 算法，insections 和 deletions 都会略少一点
+
+➜  game-cfg git:(master) ✗ git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat -- config/Dial/DialReformConfig.json
+
+ config/Dial/DialReformConfig.json | 14644 ++++++++++++++++++++++++++++++++++++++++++++++++++----------------------------------------------------------------------------------------------------------------------
+ 1 file changed, 4319 insertions(+), 10325 deletions(-)
+
+➜  game-cfg git:(master) ✗ git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat --diff-algorithm=minimal -- config/Dial/DialReformConfig.json
+
+ config/Dial/DialReformConfig.json | 14358 +++++++++++++++++++++++++++++++++++++++++++++++++-----------------------------------------------------------------------------------------------------------------------
+ 1 file changed, 4176 insertions(+), 10182 deletions(-)
+
+# 同时，也能够看到使用 minimal 算法耗时也更长一点
+
+➜  game-cfg git:(master) ✗ time git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat --diff-algorithm=minimal -- config/Dial/DialReformConfig.json
+git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat  --   0.04s user 0.01s system 2% cpu 1.563 total
+
+➜  game-cfg git:(master) ✗ time git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat --diff-algorithm=myers -- config/Dial/DialReformConfig.json  
+git diff 828a1db05549d3828b0f865e5e9989ee278ab06e --stat  --   0.01s user 0.00s system 1% cpu 0.783 total
+</code></pre><h4 id=patience>patience</h4><p>示例：</p><pre tabindex=0><code># 使用 myers
+git diff --no-index testdata/a testdata/b
+# 使用 patience
+git diff --no-index --diff-algorithm=patience testdata/a testdata/b
+</code></pre><p>上述的 myers/minimal 的目标都是尽可能减小编辑距离，但这样的问题是，代码中很多常见的行：<code>{</code>, <code>return err</code>, <code>}</code> 等等，包含的信息量几乎为 0，但是因为他们的存在，myers/minimal 算法为了追求最小编辑距离，会被这些行把 diff 块分割的十分零碎，导致 review 起来很困难。例如：</p><p><a href=http://bryanpendleton.blogspot.com/2010/05/patience-diff.html>patience 算法</a>的思路则相反，不是寻找最短编辑距离，而是牺牲一定的差异行（大部分是低信息量行），换取更加完整的 diff 片段：</p><p>不同的语法适用算法，例如 yaml 语法信息冗余少，几乎每行都是高信息量行，所以使用 myers/minimal 算法就不错。而对于 go 类似语法的文件而言，其中会包含若干低信息量行，对单个文件进行重排，或者微小重构时，使用 patience 算法则更加清晰。</p><h4 id=histogram>histogram</h4><p>类似于 patience 算法，弥补了 patience 某些场景下的缺陷。</p><h3 id=dumb-diff-algorithm-implementation>Dumb Diff Algorithm Implementation</h3><p>现在我们考虑来实现 diff 算法。</p><p>Myers Algorithm 是一个 LCS 算法，寻找最长公共子串，那么余下的，就是最短编辑距离了，例如：<code>ABCABBA</code> -> <code>CBABAC</code>，将这个问题转换一下，就是一个最优路径的问题：</p><p>从 <code>ABCABBA</code> -> <code>CBABAC</code> 的转化过程，就是从点 (0,0) 走到 点(7,6)，从起点出发，有如下规则：</p><ul><li>只能向左或者下走，每次移动增加一个编辑距离</li><li>向左走意味着删除 source 的某个字符</li><li>向下走意味着增加 target 的某个字符</li><li>如果 source[i] == target[j]，恭喜 bonus 了，那么从 (i, j) 走到 (i+1, j+1)，不增加编辑距离</li></ul><p>那我们的 diff 算法问题就变成了，找到从起点到终点的最短距离。</p><p>做题家的基因动了，这个就是经典的动态规划寻找最优路径的问题！而且很容易就能够写出 DP 方程：</p><pre tabindex=0><code>distance[i,j] = min(distance[i-1, j]+1, distance[i, j-1]+1)
+distance[i,j] = min(distance[i-1, j]+1, distance[i, j-1]+1, distance[i-1, j-1]) if s[i-1] == t[j-1]
+</code></pre><p>distance[i, j] 表示点 (i, j) 距离起点的最短距离，而每个点只能可能从 (i-1, j), (i, j-1), (i-1, j-1) 过来。</p><p>经过一轮遍历，我们可以计算出 distance table，得知最短距离，但是我们还需要输出这条路径。这就需要从终点开始，往前回溯，寻找最短路径。</p><p>很容易分析该算法的复杂度，因为十分朴素，时间上，需要遍历两次 M*N，空间上，distance table 的大小事 M*N。所以:
+时间复杂度：O(M*N)，空间复杂度：O(M*N)。</p><p><a href=mydiff/main.go>mydiff</a> 实现了 dumb diff algorithm，可以尝试运行：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span><span style=color:#0086b3>cd</span> mydiff/ <span style=color:#000;font-weight:700>&amp;&amp;</span> go install ./...
+</span></span><span style=display:flex><span><span style=color:#0086b3>cd</span> ..
+</span></span><span style=display:flex><span>mydiff --algorithm<span style=color:#000;font-weight:700>=</span>dumb testdata/a testdata/b
+</span></span></code></pre></td></tr></table></div></div><h3 id=myers-diff-algorithm-implementation>Myers Diff Algorithm Implementation</h3><p>在 dumb 算法中，能够看到有许多计算都是不必要的，很多显然不是最优路径的点的计算，都是在浪费计算，时间和空间复杂度都太高了。</p><p>1985年，Myers 便提出了 Myers Diff 算法，能够在时间复杂度: O((M+N)*D)，空间复杂度: O(M+N) (D 为编辑距离) 内完成 diff 计算。</p><p><a href=http://www.xmailserver.org/diff2.pdf>Myers Diff 算法</a> 本质上是一个贪心算法，</p><h2 id=git-merge>Git Merge</h2><p>有了良好的 object model，以及分支能力后，接下来就是工作流程中必不可少的 Merging。事实上，在 git 中广义上分支的合入包括两类：git merge 和 git patch（包括 rebase 等）。</p><p>git merge 分为两类：fast forward merge 和 3-way merge:</p><p>前者十分简单，只是将 refs/xxx 对应的 commit 修改一下，移动到另一个 commit 上。例如，在我们 MR 完成后，会在 master 分支 pull 刚才合入的代码，如果中间没有其他合入，通常都是一次 fast forward merge。</p><p>3-way merge 之所以叫做 3-way，是因为包括了 base, theirs 和 ours。本质上，参考 base 这个 commit，将 theirs commit 的内容，合并到 ours commit 上。</p><p>如果是 2-way merge，例如合并：theirs:<code>ABC</code> 和 ours:<code>ADC</code>，第二个字符不同，到底是我修改了，还是对方修改了呢？应该接受哪一方呢？提供的信息不够，工具无法帮助我们自动解决冲突，则需要人工介入。</p><p>如果是 3-way merge，知道 base:<code>ABC</code>，那么就知道是 ours 做了修改，theris 没有变更，工具会自动接受我们的修改，合并结果是：<code>ADC</code>。</p><p>但是如果，base:<code>AEC</code> 呢？这样你会发现，theirs 修改了第二个字符，ours 也修改了第二个字符，工具将无法帮我们决策，便会以 conflicts 的形式，交给人类去解决冲突，这也是我们使用 git merge 过程中偶尔会出现冲突的原因。</p><p>现在，让我们来实现一个 <a href=https://en.wikipedia.org/wiki/Diff3>diff3</a> 算法。</p><p>假设我们现在有这样的修改：</p><pre tabindex=0><code>         Ours               Base                Theirs
+
+      1. celery           1. celery           1. celery
+      2. salmon           2. garlic           2. salmon
+      3. tomatoes         3. onions           3. garlic
+      4. garlic           4. salmon           4. onions
+      5. onions           5. tomatoes         5. tomatoes
+      6. wine             6. wine             6. wine
+</code></pre><p>然后分别计算 diff(Base, Ours) 和 diff(Base, Theirs):</p><pre tabindex=0><code>         Ours               Base
+
+      1. celery           1. celery
+-                         2. garlic                           
+-                         3. onions                           
+      2. salmon           4. salmon
+      3. tomatoes         5. tomatoes
++     4. garlic                                               
++     5. onions                                               
+      6. wine             6. wine
+
+-----------------------------------------------------------
+
+                             Base               Theirs
+
+                          1. celery           1. celery
++                                             2. salmon       
+                          2. garlic           3. garlic
+                          3. onions           4. onions
+-                         4. salmon                           
+                          5. tomatoes         5. tomatoes
+                          6. wine             6. wine
+</code></pre><p>然后，找到那些相比 Base，Ours 和 Theirs 都没有修改的内容（下面的 A, C, E），并且将这些行作为分割线，将我们的数据分割为若干个 trunks：</p><pre tabindex=0><code>         Ours               Base                Theirs
+
+      1. celery           1. celery           1. celery         A
+      -----------------------------------------------------------
+                          2. garlic           2. salmon         B
+      2. salmon           3. onions           3. garlic
+                          4. salmon           4. onions
+      -----------------------------------------------------------
+      3. tomatoes         5. tomatoes         5. tomatoes       C
+      -----------------------------------------------------------
+      4. garlic                                                 D
+      5. onions
+      -----------------------------------------------------------
+      6. wine             6. wine             6. wine           E
+</code></pre><p>然后，我们遍历 trunks，对每个 trunk 做如下操作：</p><ol><li>如果相比 Base，两边都没修改，输出原内容</li><li>如果相比 Base，仅有一方修改，接受此修改</li><li>如果相比 Base，两者都修改了，且修改后结果相同，输出原内容</li><li>如果相比 Base，两者都修改了，且修改后内容不同，<strong>conflicts!</strong></li></ol><p>那么，我们能够得到这样的输出：</p><pre tabindex=0><code>      celery
+      &lt;&lt;&lt;&lt;&lt;&lt;&lt; Ours
+      salmon
+      =======
+      salmon
+      garlic
+      onions
+      &gt;&gt;&gt;&gt;&gt;&gt;&gt; Theirs
+      tomatoes
+      garlic
+      onions
+      wine
+</code></pre><p>所以，能够看到基于 diff 算法，分别计算 diff(base, a) 和 diff(base, b)，并且按照未修改行固定分割后，能够完成一定的自动合并，而一些两者有不同修改的情况，则会产生合并冲突，需要人工解决。<a href=./mydiff/main.go>mydiff</a> 实现了 merge 功能，试试吧：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="white-space:pre;user-select:none;margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre tabindex=0 style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-shell data-lang=shell><span style=display:flex><span><span style=color:#0086b3>cd</span> mydiff/ <span style=color:#000;font-weight:700>&amp;&amp;</span> go run main.go --merge --base ../testdata/diff3-base ../testdata/diff3-master ../testdata/diff3-dev
+</span></span></code></pre></td></tr></table></div></div><h2 id=git-patch>Git Patch</h2><p>包括 <code>git cherry-pick</code>, <code>git revert</code>, <code>git rebase</code> 命令。</p><p>使用 <code>git diff > some.patch</code> 可以生成一个 patch 文件，实际上就是包含了两个 commit 的内容差异，随后，我们可以使用 <code>git apply</code> 命令，将这个差异应用在一个 commit 上，以此产生一个新的 commit。</p><p>本质上，git cherry-pick 是 <code>git diff</code> 生成两个 commit 的 diff patch，然后将其应用到某个 commit 上。此时，因为可能不存在 base commit，所以很可能成为 2-way merge，导致需要手动处理很多冲突。</p><p>而 git rebase, git revert 都是基于 git cherry-pick 实现的，可以在实践中感受到：<a href=practices/rebase-is-many-cherry-picks.sh>rebase-is-many-cherry-picks</a>。</p><h2 id=optimizations>Optimizations</h2><p>git 在实际应用中，有一些优化手段。这里主要介绍 commit graph 和 bitmap。</p><h3 id=commit-graph>Commit Graph</h3><p><code>git log</code> 命令会遍历输出当前分支对应的所有 commits，如果需要一个一个遍历 objects / pack 文件，效率十分低下，需要大量的文件读写和计算。</p><p>于是 commit graph (since git v2.8) 应运而生，将所有 commit 信息都保存在一个文件中，并且设计成方便检索的方式，便能够十分轻松的进行遍历，以实现 git log 类似命令了。</p><p>commit graph 文件保存在 <code>.git/objects/info/commit-graph</code> 文件中，其格式如下：</p><p><img src=images/commit-graph.png alt=commit-graph></p><p>能够看到，首次 commit 的检索是 O(log(N)), N为 commit 数量 的。而遍历整个 commit 历史，都是 O(N) N为 历史数量。</p><h3 id=bit-map>Bit Map</h3><p>当我们 clone / pull / fetch 时，会经常看到这行输出，<code>Counting objects: xxx</code>:
+<img src=images/counting-objects.png alt=counting-objects></p><p>这是因为，我们需要识别 remote 和 local 的差异，然后仅拉取 local 缺少的 objects。具体的过程：</p><pre tabindex=0><code>1. 列出本地所有分支最新的一个commit
+2. 列出远程所有分支最新的一个commit
+3. 两者进行比较，只要有不同，就意味着分支发生变动
+4. 每一个发生变动的commit，都清点其中具体变动的子目录和文件
+5. 追溯到当前commit的父节点，重复第四步，直至本地与远程的历史一致为止
+6. 加总所有需要变动的对象
+</code></pre><p>如果按照朴素的方式，一个一个 commit object 的遍历，找到所有缺失的 objects 列表，将会是十分耗时的。据说，github 上一次 git clone linux 仓库的过程，将会耗费 8mins 去 counting objects，显然不可接受。</p><p>建立 bitmap 索引，标识每个 commit 是否包含 object，那么寻找 commitA ~ commitB 之间的差异，将变得十分高效(提升)：</p></div><div class=tags></div><div class=back><a href=https://github.com/dashahe/dashahe.github.io/blob/master/content/posts/git-internals/blog.md title=github><i data-feather=github></i> Edit this on GitHub</a></div><div class=back><a href=https://curryxie.com/><span aria-hidden=true>← Back</span></a></div><div class=back>Next time, we'll talk about <i>"What Tiger King can teach us about x86 Assembly"</i></div></div></div><div class="footer wrapper"><nav class=nav><div>2022</div></nav></div><script>feather.replace()</script></body></html>
